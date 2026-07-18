@@ -4,11 +4,11 @@ on:
   workflow_call:
     secrets:
       GEMINI_API_KEY:
-        required: true
+        required: false
       MAIL_USERNAME:
-        required: true
+        required: false
       MAIL_PASSWORD:
-        required: true
+        required: false
 
 permissions:
   contents: read
@@ -77,7 +77,7 @@ jobs:
 
       - name: Fetch linter configs from central repo
         run: |
-          CENTRAL="https://raw.githubusercontent.com/PranavPuranik-hub/central-workflows/main/configs"
+          CENTRAL="https://raw.githubusercontent.com/YOUR_USERNAME/central-workflows/main/configs"
           curl -sf "$CENTRAL/.eslintrc.json"    -o .eslintrc.json    || true
           curl -sf "$CENTRAL/.flake8"           -o .flake8           || true
           curl -sf "$CENTRAL/ruff.toml"         -o ruff.toml         || true
