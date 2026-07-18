@@ -4,11 +4,11 @@ on:
   workflow_call:
     secrets:
       GEMINI_API_KEY:
-        required: true
+        required: false
       MAIL_USERNAME:
-        required: true
+        required: false
       MAIL_PASSWORD:
-        required: true
+        required: false
 
 permissions:
   contents: read
