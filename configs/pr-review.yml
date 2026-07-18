@@ -1,0 +1,289 @@
+name: PR Review
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THIS FILE IS AUTO-MANAGED by central-workflows repo.
+# DO NOT EDIT MANUALLY in this repo — your changes will be overwritten.
+# To update: edit configs/pr-review.yml in central-workflows repo.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      languages: ${{ steps.detection.outputs.languages }}
+      codeql_languages: ${{ steps.detection.outputs.codeql_languages }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect project types from changed files
+        id: detection
+        run: |
+          BASE=${{ github.event.pull_request.base.sha }}
+          HEAD=${{ github.event.pull_request.head.sha }}
+          changed_files=$(git diff --name-only "$BASE" "$HEAD")
+
+          langs=()
+          codeql_langs=()
+
+          if echo "$changed_files" | grep -qE '\.py$'; then
+            langs+=('"python"')
+            codeql_langs+=('python')
+          fi
+          if echo "$changed_files" | grep -qE '\.(js|jsx|mjs)$'; then
+            langs+=('"javascript"')
+            codeql_langs+=('javascript')
+          fi
+          if echo "$changed_files" | grep -qE '\.(html|css|scss)$'; then
+            langs+=('"htmlcss"')
+          fi
+
+          if [ ${#langs[@]} -eq 0 ]; then
+            echo "languages=[]" >> $GITHUB_OUTPUT
+          else
+            echo "languages=[$(IFS=,; echo "${langs[*]}")]" >> $GITHUB_OUTPUT
+          fi
+
+          if [ ${#codeql_langs[@]} -gt 0 ]; then
+            echo "codeql_languages=$(IFS=,; echo "${codeql_langs[*]}")" >> $GITHUB_OUTPUT
+          else
+            echo "codeql_languages=" >> $GITHUB_OUTPUT
+          fi
+
+  quality:
+    needs: detect
+    if: needs.detect.outputs.languages != '[]'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        language: ${{ fromJSON(needs.detect.outputs.languages) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Python
+      - name: Set up Python
+        if: matrix.language == 'python'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Python linters
+        if: matrix.language == 'python'
+        run: pip install ruff flake8 pytest
+
+      - name: Install project dependencies
+        if: matrix.language == 'python' && hashFiles('requirements.txt') != ''
+        run: pip install -r requirements.txt
+
+      - name: Run Ruff
+        if: matrix.language == 'python'
+        run: ruff check .
+
+      - name: Run Flake8
+        if: matrix.language == 'python'
+        run: flake8 .
+
+      - name: Run Pytest
+        if: matrix.language == 'python'
+        run: |
+          if [ -d tests ] || [ -d test ]; then pytest; else echo "No tests found, skipping."; fi
+
+      # JavaScript / React
+      - name: Set up Node.js
+        if: matrix.language == 'javascript'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install JS dependencies
+        if: matrix.language == 'javascript'
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Install ESLint
+        if: matrix.language == 'javascript'
+        run: |
+          npm install --save-dev eslint
+          if grep -q '"react"' package.json 2>/dev/null; then
+            npm install --save-dev eslint-plugin-react
+          fi
+
+      - name: Run ESLint
+        if: matrix.language == 'javascript'
+        run: npx eslint . --ext .js,.jsx --max-warnings 0
+
+      - name: Run Jest
+        if: matrix.language == 'javascript'
+        run: npm run test --if-present || echo "No test script found."
+
+      # HTML / CSS
+      - name: Set up Node.js for HTML/CSS
+        if: matrix.language == 'htmlcss'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install HTMLHint and Stylelint
+        if: matrix.language == 'htmlcss'
+        run: npm install --save-dev htmlhint stylelint stylelint-config-standard
+
+      - name: Run HTMLHint
+        if: matrix.language == 'htmlcss'
+        run: npx htmlhint "**/*.html"
+
+      - name: Run Stylelint
+        if: matrix.language == 'htmlcss'
+        run: npx stylelint "**/*.css" "**/*.scss" --max-warnings 0
+
+  security:
+    needs: detect
+    if: needs.detect.outputs.codeql_languages != ''
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ needs.detect.outputs.codeql_languages }}
+          build-mode: none
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  ai-summary:
+    runs-on: ubuntu-latest
+    needs: detect
+    if: always()
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate git diff
+        run: |
+          git diff ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} > diff.txt
+          echo "Diff: $(wc -l < diff.txt) lines, $(wc -c < diff.txt) bytes"
+
+      - name: Generate AI summary
+        id: ai
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python3 -c "
+          import json, os, sys, time, urllib.request
+
+          with open('diff.txt', 'r') as f:
+              diff_content = f.read()
+
+          MAX_CHARS = 200_000
+          truncated = False
+          if len(diff_content) > MAX_CHARS:
+              diff_content = diff_content[:MAX_CHARS]
+              truncated = True
+
+          prompt = (
+              'You are a helpful code reviewer. Summarize the following code changes '
+              'from a pull request. Explain what changed, why it matters, and highlight '
+              'any potential concerns. Keep the summary concise and use markdown.\n\n'
+              + diff_content
+              + ('\n\n[NOTE: diff was truncated due to size]' if truncated else '')
+          )
+
+          body = {'contents': [{'parts': [{'text': prompt}]}]}
+          api_key = os.environ['GEMINI_API_KEY'].strip()
+          if not api_key:
+              print('GEMINI_API_KEY is not set', file=sys.stderr)
+              sys.exit(1)
+
+          data = json.dumps(body).encode('utf-8')
+          models_to_try = ['gemini-3.5-flash', 'gemini-2.5-flash']
+          result = None
+          last_error = None
+
+          for model in models_to_try:
+              url = f'https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent'
+              req = urllib.request.Request(
+                  url, data=data,
+                  headers={'Content-Type': 'application/json', 'x-goog-api-key': api_key},
+              )
+              print(f'Trying: {url}', file=sys.stderr)
+              for attempt in range(8):
+                  try:
+                      with urllib.request.urlopen(req) as resp:
+                          result = json.loads(resp.read().decode('utf-8'))
+                      break
+                  except urllib.error.HTTPError as e:
+                      last_error = e
+                      if e.code == 503 and attempt < 7:
+                          time.sleep(min(2 ** attempt, 60))
+                          continue
+                      result = None
+                      break
+              if result is not None:
+                  break
+
+          try:
+              if result is None:
+                  raise last_error
+              if 'candidates' in result and result['candidates']:
+                  parts = result['candidates'][0].get('content', {}).get('parts', [])
+                  text = ''.join(p.get('text', '') for p in parts)
+                  if text:
+                      print(text)
+                  else:
+                      print('Empty response', file=sys.stderr); sys.exit(1)
+              elif 'error' in result:
+                  print('API Error:', result['error'].get('message'), file=sys.stderr); sys.exit(1)
+              else:
+                  print('Unexpected response:', result, file=sys.stderr); sys.exit(1)
+          except urllib.error.HTTPError as e:
+              print(f'HTTP {e.code} {e.reason}', file=sys.stderr)
+              print(e.read().decode('utf-8', errors='replace'), file=sys.stderr)
+              sys.exit(1)
+          except Exception as e:
+              print('Error:', str(e), file=sys.stderr); sys.exit(1)
+          " > summary.md
+
+      - name: Post summary as PR comment
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} --body-file summary.md
+
+      - name: Prepare email body
+        if: success()
+        run: |
+          {
+            echo "**Repository:** ${{ github.repository }}"
+            echo "**PR:** ${{ github.event.pull_request.title }}"
+            echo "**Link:** ${{ github.event.pull_request.html_url }}"
+            echo ""
+            cat summary.md
+          } > email_body.md
+
+      - name: Send summary via email
+        if: success()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "PR Review: [${{ github.repository }}] ${{ github.event.pull_request.title }}"
+          to: pranavm.24.beis@acharya.ac.in
+          from: PR Review Bot <${{ secrets.MAIL_USERNAME }}>
+          html_body: file://email_body.md
+          convert_markdown: true

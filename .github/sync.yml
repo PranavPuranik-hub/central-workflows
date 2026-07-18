@@ -1,0 +1,49 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# .github/sync.yml  (lives in central-workflows repo)
+#
+# Every time you push to central-workflows, this file tells the sync action
+# EXACTLY which files to copy into WHICH client repos.
+#
+# To add a new repo: just add it under `repos:` in each group below.
+# To add a new config file: add it to the files list AND to the group repos.
+# ─────────────────────────────────────────────────────────────────────────────
+
+group:
+
+  # ── GROUP 1: The PR review workflow ──────────────────────────────────────
+  # This is the main workflow file every repo needs.
+  - files:
+      - source: configs/pr-review.yml
+        dest: .github/workflows/pr-review.yml
+    repos: |
+      PranavPuranik-hub/testing-PR-review
+
+  # ── GROUP 2: JavaScript / ESLint config ──────────────────────────────────
+  - files:
+      - source: configs/.eslintrc.json
+        dest: .eslintrc.json
+    repos: |
+     PranavPuranik-hub/testing-PR-review
+
+  # ── GROUP 3: Python linter configs ───────────────────────────────────────
+  - files:
+      - source: configs/.flake8
+        dest: .flake8
+      - source: configs/ruff.toml
+        dest: ruff.toml
+    repos: |
+      PranavPuranik-hub/testing-PR-review
+
+  # ── GROUP 4: HTML linter config ──────────────────────────────────────────
+  - files:
+      - source: configs/.htmlhintrc
+        dest: .htmlhintrc
+    repos: |
+      PranavPuranik-hub/testing-PR-review
+
+  # ── GROUP 5: CSS linter config ───────────────────────────────────────────
+  - files:
+      - source: configs/.stylelintrc.json
+        dest: .stylelintrc.json
+    repos: |
+      PranavPuranik-hub/testing-PR-review

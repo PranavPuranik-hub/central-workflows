@@ -1,0 +1,14 @@
+{
+    "extends": ["stylelint-config-standard"],
+    "rules": {
+      "indentation": 2,
+      "string-quotes": "double",
+      "no-duplicate-selectors": true,
+      "color-hex-case": "lower",
+      "color-hex-length": "short",
+      "selector-combinator-space-after": "always",
+      "selector-attribute-quotes": "always",
+      "declaration-block-trailing-semicolon": "always",
+      "declaration-no-important": true
+    }
+  }
