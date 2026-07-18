@@ -1,14 +1,14 @@
-name: PR Review
-
-# ─────────────────────────────────────────────────────────────────────────────
-# THIS FILE IS AUTO-MANAGED by central-workflows repo.
-# DO NOT EDIT MANUALLY in this repo — your changes will be overwritten.
-# To update: edit configs/pr-review.yml in central-workflows repo.
-# ─────────────────────────────────────────────────────────────────────────────
+name: Reusable PR Review
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  workflow_call:
+    secrets:
+      GEMINI_API_KEY:
+        required: true
+      MAIL_USERNAME:
+        required: true
+      MAIL_PASSWORD:
+        required: true
 
 permissions:
   contents: read
@@ -16,23 +16,26 @@ permissions:
   security-events: write
 
 jobs:
+
   detect:
     runs-on: ubuntu-latest
     outputs:
       languages: ${{ steps.detection.outputs.languages }}
       codeql_languages: ${{ steps.detection.outputs.codeql_languages }}
     steps:
-      - name: Checkout code
+      - name: Checkout client repo code
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Detect project types from changed files
+      - name: Detect languages from changed files
         id: detection
         run: |
           BASE=${{ github.event.pull_request.base.sha }}
           HEAD=${{ github.event.pull_request.head.sha }}
           changed_files=$(git diff --name-only "$BASE" "$HEAD")
+          echo "Changed files:"
+          echo "$changed_files"
 
           langs=()
           codeql_langs=()
@@ -69,9 +72,20 @@ jobs:
       matrix:
         language: ${{ fromJSON(needs.detect.outputs.languages) }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout client repo code
+        uses: actions/checkout@v4
 
-      # Python
+      - name: Fetch linter configs from central repo
+        run: |
+          CENTRAL="https://raw.githubusercontent.com/YOUR_USERNAME/central-workflows/main/configs"
+          curl -sf "$CENTRAL/.eslintrc.json"    -o .eslintrc.json    || true
+          curl -sf "$CENTRAL/.flake8"           -o .flake8           || true
+          curl -sf "$CENTRAL/ruff.toml"         -o ruff.toml         || true
+          curl -sf "$CENTRAL/.htmlhintrc"       -o .htmlhintrc       || true
+          curl -sf "$CENTRAL/.stylelintrc.json" -o .stylelintrc.json || true
+          echo "Configs fetched:"
+          ls -la .eslintrc.json .flake8 ruff.toml .htmlhintrc .stylelintrc.json 2>/dev/null || true
+
       - name: Set up Python
         if: matrix.language == 'python'
         uses: actions/setup-python@v5
@@ -97,9 +111,12 @@ jobs:
       - name: Run Pytest
         if: matrix.language == 'python'
         run: |
-          if [ -d tests ] || [ -d test ]; then pytest; else echo "No tests found, skipping."; fi
+          if [ -d tests ] || [ -d test ]; then
+            pytest
+          else
+            echo "No test directory found, skipping."
+          fi
 
-      # JavaScript / React
       - name: Set up Node.js
         if: matrix.language == 'javascript'
         uses: actions/setup-node@v4
@@ -127,7 +144,6 @@ jobs:
         if: matrix.language == 'javascript'
         run: npm run test --if-present || echo "No test script found."
 
-      # HTML / CSS
       - name: Set up Node.js for HTML/CSS
         if: matrix.language == 'htmlcss'
         uses: actions/setup-node@v4
@@ -153,12 +169,15 @@ jobs:
     permissions:
       security-events: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout client repo code
+        uses: actions/checkout@v4
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
         with:
           languages: ${{ needs.detect.outputs.codeql_languages }}
           build-mode: none
+
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
 
@@ -167,7 +186,8 @@ jobs:
     needs: detect
     if: always()
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout client repo code
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
